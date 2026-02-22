@@ -1,8 +1,8 @@
-thesis_finance_pipeline:
+scooter_fleet_depreciation:
   target: dev
   outputs:
     dev:
       type: duckdb
       path: "{{ env_var('DUCKDB_PATH', '/opt/duckdb/thesis.duckdb') }}"
       threads: 4
-      schema: main
+      schema: data

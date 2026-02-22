@@ -10,13 +10,13 @@ test-paths: ["tests"]
 
 models:
   scooter_fleet_depreciation:
+    +schema: warehouse
     staging:
       +materialized: view
     intermediate:
       +materialized: view
     marts:
       +materialized: table
-
 seeds:
   scooter_fleet_depreciation:
-    +schema: raw
+    +schema: lake

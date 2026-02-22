@@ -1,0 +1,56 @@
+version: 2
+
+seeds:
+  - name: rides
+    config:
+      column_types:
+        ride_id: bigint
+        scooter_id: integer
+        start_time: timestamp
+        end_time: timestamp
+        duration_min: integer
+        distance_km: double
+        fare_amount_eur: decimal(10,2)
+        currency: varchar
+        city: varchar
+        country: varchar
+
+  - name: scooter_heartbeat
+    config:
+      column_types:
+        snapshot_date: date
+        snapshot_ts: timestamp
+        scooter_id: integer
+        scooter_state: varchar
+        city: varchar
+        country: varchar
+        latitude: double
+        longitude: double
+        last_ride_time: timestamp
+        rides_today: integer
+        total_rides: integer
+        total_km: double
+        total_ride_minutes: integer
+        avg_ride_duration_min: double
+        avg_ride_distance_km: double
+        is_writeoff_candidate: boolean
+
+  - name: scooters_master
+    config:
+      column_types:
+        scooter_id: integer
+        model: varchar
+        purchase_date: date
+        purchase_price_eur: decimal(10,2)
+        total_life_days: integer
+        expected_total_rides: integer
+
+  - name: account_mapping
+    config:
+      column_types:
+        event_type: varchar
+        country: varchar
+        debit_account_code: varchar
+        credit_account_code: varchar
+        valid_from: date
+        valid_to: date
