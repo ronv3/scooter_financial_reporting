@@ -1,0 +1,21 @@
+selectors:
+  - name: staging
+    description: Select all models in the staging folder
+    definition:
+        method: path
+        value: models/staging/*
+  - name: intermediate
+    description: Select all models in the intermediate folder
+    definition:
+        method: path
+        value: models/intermediate/*
+  - name: marts
+    description: Select all models in the marts folder
+    definition:
+        method: path
+        value: models/marts/*
+  - name: reports
+    description: Select all models in the reports folder
+    definition:
+        method: path
+        value: models/reports/*

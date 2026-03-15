@@ -1,0 +1,11 @@
+version: 2
+
+sources:
+  - name: data_lake
+    schema: data_lake
+    description: "Seed-loaded source tables for the scooter financial DWH"
+    tables:
+      - name: rides
+        description: "Billing/invoicing records — one row per completed scooter ride"
+      - name: account_mapping
+        description: "Chart of accounts + journal-line-type mapping for double-entry bookkeeping"

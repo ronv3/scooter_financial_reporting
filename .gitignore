@@ -28,3 +28,5 @@ exports/*.xml
 dbt/target/
 dbt/dbt_packages/
 dbt/logs/
+dbt/dbt_internal_packages/
+dbt/.user.yml
