@@ -2,18 +2,16 @@
     Singular test: Balance sheet equation
     ======================================
     Assets = Liabilities + Equity must hold.
-    If any row in the balance sheet has equation_balanced = false,
-    the accounting equation is broken and the pipeline should fail.
+
+    Now references rpt_balance_sheet_summary which contains one row
+    per report_date with the equation_balanced flag (threshold 0.001).
 */
 
 select
-    section,
-    account_code,
-    account_name,
-    balance,
+    report_date,
     total_assets,
     total_liabilities,
     total_equity,
     liabilities_plus_equity
-from {{ ref('rpt_balance_sheet') }}
+from {{ ref('rpt_balance_sheet_summary') }}
 where equation_balanced = false

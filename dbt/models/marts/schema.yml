@@ -48,7 +48,8 @@ models:
     description: >
       Account-level aggregation of the general ledger, broken down by
       reporting_period. Total debits must equal total credits per period.
-      Rebuilt fully on every run from the entire GL.
+      Materialized as incremental (delete+insert per period) — only the
+      current period is re-aggregated; historical periods stay untouched.
     columns:
       - name: reporting_period
         tests:

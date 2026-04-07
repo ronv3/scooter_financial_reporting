@@ -6,6 +6,8 @@ models:
       Double-entry journal lines derived from rides. Each ride produces
       3 lines (no coupon) or 4 lines (with coupon). Zero-amount lines
       are excluded. Debits always equal credits per order_id.
+      Materialized as incremental table (delete+insert per period) for
+      auditability — persists the exact journal lines posted per period.
     columns:
       - name: journal_entry_id
         description: "Deterministic MD5 hash of order_id + line_type"
@@ -27,5 +29,9 @@ models:
               values: ['debit', 'credit']
       - name: line_amount
         description: "Always > 0 (zero-amount lines are filtered out)"
+        tests:
+          - not_null
+      - name: loaded_at
+        description: "Timestamp when this row was inserted — audit metadata"
         tests:
           - not_null

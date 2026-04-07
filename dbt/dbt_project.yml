@@ -12,14 +12,17 @@ models:
   scooter_fleet_depreciation:
     +schema: warehouse
     staging:
+      # stg_rides overrides to incremental via in-model config()
+      # stg_chart_of_accounts and stg_account_mapping remain views (static reference data)
       +materialized: view
     intermediate:
-      +materialized: view
+      # int_journal_entries overrides to incremental via in-model config()
+      +materialized: table
     marts:
       +materialized: table
     reports:
+      # All report models override to incremental via in-model config()
       +materialized: table
 seeds:
   scooter_fleet_depreciation:
     +schema: lake
-    

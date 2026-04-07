@@ -70,8 +70,8 @@ CITY_MAP = {
 
 # Country-specific VAT rates
 VAT_RATES = {
-    "Estonia": 0.22,
-    "Finland": 0.24,
+    "Estonia": 0.24,
+    "Finland": 0.255,
     "Latvia": 0.21,
 }
 

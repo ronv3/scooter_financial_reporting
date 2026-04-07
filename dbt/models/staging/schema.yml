@@ -5,6 +5,8 @@ models:
     description: >
       Cleaned and typed ride billing records. Coupon fields normalised
       (empty/None → NULL, amount → 0). ride_date derived from start_time.
+      Materialized as incremental table (delete+insert per period) for
+      auditability — persists the exact cleaned rides used in each period.
     columns:
       - name: order_id
         description: "Unique order identifier (UUID)"
@@ -29,6 +31,10 @@ models:
           - not_null
           - accepted_values:
               values: ['Estonia', 'Finland', 'Latvia']
+      - name: loaded_at
+        description: "Timestamp when this row was inserted — audit metadata"
+        tests:
+          - not_null
 
   - name: stg_account_mapping
     description: >

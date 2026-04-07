@@ -3,10 +3,26 @@
     ==============
     Clean types, add ride_date, normalise nulls for coupon fields.
 
+    Materialized as an INCREMENTAL TABLE (delete+insert per period)
+    so that processed rides are persisted and auditable.  An auditor
+    can query this table to see exactly which rides were included in
+    any historical period's processing, with the exact cleaned values.
+
     Filters to the current reporting period using the start_date / end_date
     vars.  When running via Airflow the DAG passes explicit dates;
     when running ad-hoc the macros default to the current calendar month.
 */
+
+{{
+    config(
+        materialized='incremental',
+        unique_key='order_id',
+        on_schema_change='append_new_columns',
+        pre_hook=[
+            "{{ delete_period('ride_date') }}"
+        ] if is_incremental() else []
+    )
+}}
 
 with source as (
     select * from {{ source('data_lake', 'rides') }}
@@ -47,7 +63,10 @@ staged as (
         ) as coupon_amount,
 
         city,
-        country
+        country,
+
+        -- Audit metadata
+        current_timestamp as loaded_at
 
     from source
     where cast(start_time as date) >= {{ get_start_date() }}

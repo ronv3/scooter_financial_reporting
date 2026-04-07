@@ -111,11 +111,17 @@ duckdb duckdb/thesis.duckdb
 ```
 
 ```sql
--- Full-year income statement
-SELECT * FROM data_warehouse.rpt_income_statement ORDER BY sort_order, account_code;
+-- Full-year income statement (account-level detail)
+SELECT * FROM data_warehouse.rpt_income_statement_detail ORDER BY sort_order, account_code;
 
--- Balance sheet as of December 31, 2026
-SELECT * FROM data_warehouse.rpt_balance_sheet ORDER BY sort_order, account_code;
+-- Period-level P&L summary
+SELECT * FROM data_warehouse.rpt_income_statement_summary;
+
+-- Balance sheet detail as of December 31, 2026
+SELECT * FROM data_warehouse.rpt_balance_sheet_detail ORDER BY sort_order, account_code;
+
+-- Balance sheet summary with equation check
+SELECT * FROM data_warehouse.rpt_balance_sheet_summary;
 
 -- General ledger row count
 SELECT COUNT(*) FROM data_warehouse.fct_general_ledger;
@@ -125,7 +131,7 @@ SELECT
     reporting_period,
     SUM(total_debit)  AS total_debit,
     SUM(total_credit) AS total_credit,
-    ABS(SUM(total_debit) - SUM(total_credit)) < 0.01 AS balanced
+    ABS(SUM(total_debit) - SUM(total_credit)) < 0.001 AS balanced
 FROM data_warehouse.fct_trial_balance
 GROUP BY reporting_period
 ORDER BY reporting_period;
@@ -188,28 +194,28 @@ fct_general_ledger              Joins with posting rules + chart of accounts
         |                       Incremental: delete+insert by period
         v
 fct_trial_balance               Aggregates ledger by account + period
-        |                       Full rebuild from entire GL each run
+        |                       Incremental: delete+insert by period
        / \
       v   v
-rpt_income_statement         rpt_balance_sheet
-(current period only)        (cumulative through period end)
+rpt_income_statement_detail  rpt_balance_sheet_detail
+rpt_income_statement_summary rpt_balance_sheet_summary
 ```
 
 ### Layer-by-Layer Detail
 
 **Source data generation** (`scripts/create_source_data.py`): A Python script generates synthetic ride billing records — one row per completed scooter ride with pricing breakdown (net amount, VAT, gross, coupon discount). The script accepts `--start-date` and `--end-date` arguments. Without arguments it defaults to the previous calendar month. All random generation uses a fixed seed (42) so the same date range always produces identical data.
 
-**Staging** (`stg_rides`, `stg_account_mapping`, `stg_chart_of_accounts`): Defensive data cleaning. Types are cast explicitly (amounts to `DECIMAL(12,2)`, timestamps, etc.). Coupon fields are normalized (empty strings and `'None'` become SQL `NULL`, missing coupon amounts default to 0). The staging layer also applies the period filter — only rides within the `start_date`/`end_date` range flow downstream.
+**Staging** (`stg_rides`, `stg_account_mapping`, `stg_chart_of_accounts`): Defensive data cleaning. Types are cast explicitly (amounts to `DECIMAL(12,2)`, timestamps, etc.). Coupon fields are normalized (empty strings and `'None'` become SQL `NULL`, missing coupon amounts default to 0). `stg_rides` is materialized as an **incremental** table (delete+insert per period) so that the exact cleaned rides used in each period are persisted and auditable. The staging layer also applies the period filter — only rides within the `start_date`/`end_date` range flow downstream.
 
-**Intermediate** (`int_journal_entries`): The core accounting transformation. Each ride is cross-joined with a line-type spine to produce double-entry journal lines. A ride without a coupon produces 3 lines; a ride with a coupon produces 4. Zero-amount lines are filtered out (standard accounting practice — you do not post a EUR 0.00 entry). Each line receives a deterministic `journal_entry_id` (MD5 hash of `order_id` + `line_type`) for traceability.
+**Intermediate** (`int_journal_entries`): The core accounting transformation, materialized as an **incremental** table (delete+insert per period) for auditability. Each ride is cross-joined with a line-type spine to produce double-entry journal lines. A ride without a coupon produces 3 lines; a ride with a coupon produces 4. Zero-amount lines are filtered out (standard accounting practice — you do not post a EUR 0.00 entry). Each line receives a deterministic `journal_entry_id` (MD5 hash of `order_id` + `line_type`) for traceability.
 
 **General Ledger** (`fct_general_ledger`): The single source of truth for all financial reporting. Journal lines are enriched with account metadata through a two-step join: first to the posting rules (resolving `line_type + country` to an `account_code`), then to the chart of accounts (resolving `account_code` to name, category, and normal side). The GL is materialized as an **incremental** table with a pre-hook that deletes the current period's rows before inserting fresh ones. This makes it append-only across periods while allowing safe reprocessing of any individual period.
 
-**Trial Balance** (`fct_trial_balance`): Aggregates the entire general ledger by `reporting_period`, `account_code`, and `country`. Produces total debits, total credits, and net balance per account per month. Rebuilt fully on every run so it always reflects the complete GL.
+**Trial Balance** (`fct_trial_balance`): Aggregates the general ledger by `reporting_period`, `account_code`, and `country`. Produces total debits, total credits, and net balance per account per month. Materialized as **incremental** (delete+insert per reporting period) — only the current period is re-aggregated while historical periods remain untouched, acting as a soft period close.
 
-**Income Statement** (`rpt_income_statement`): A period statement showing revenue minus expenses for the reporting period. Filters the trial balance to the current month(s) only.
+**Income Statement** (`rpt_income_statement_detail` + `rpt_income_statement_summary`): A period statement showing revenue minus expenses for the reporting period. Both models are materialized as **incremental** tables (delete+insert by `period_end`), so each monthly run adds that period's rows while previous periods remain untouched — building a historical series of income statements. The detail model provides account-level line items; the summary model produces one row per period with total revenue, total expenses, and net income.
 
-**Balance Sheet** (`rpt_balance_sheet`): A point-in-time statement showing cumulative financial position. Filters the trial balance to everything up to and including the period end date, then aggregates across all historical months. Includes an `equation_balanced` validation column that verifies Assets = Liabilities + Equity.
+**Balance Sheet** (`rpt_balance_sheet_detail` + `rpt_balance_sheet_summary`): A point-in-time statement showing cumulative financial position. Both models are materialized as **incremental** tables (delete+insert by `report_date`), so each monthly run adds a cumulative snapshot while previous snapshots remain untouched. The detail model provides account-level balances; the summary model produces one row per report date with the accounting equation validation (`equation_balanced` flag, threshold 0.001).
 
 ---
 
@@ -217,25 +223,25 @@ rpt_income_statement         rpt_balance_sheet
 
 ### The Journal Entry for a Scooter Ride
 
-Every completed ride produces a balanced set of journal entries. For a ride costing EUR 5.18 net + 22% VAT = EUR 6.32 gross, with no coupon:
+Every completed ride produces a balanced set of journal entries. For a ride costing EUR 5.18 net + 24% VAT = EUR 6.42 gross, with no coupon:
 
 ```
-DR  1200  Accounts Receivable       EUR 6.32
+DR  1200  Accounts Receivable       EUR 6.42
     CR  4101  Ride Revenue — Estonia     EUR 5.18
-    CR  2101  VAT Payable — Estonia      EUR 1.14
+    CR  2101  VAT Payable — Estonia      EUR 1.24
 
-Debits (6.32) = Credits (5.18 + 1.14 = 6.32)  ✓
+Debits (6.42) = Credits (5.18 + 1.24 = 6.42)  ✓
 ```
 
-With a EUR 3.00 coupon applied (customer pays EUR 3.32):
+With a EUR 3.00 coupon applied (customer pays EUR 3.42):
 
 ```
-DR  1200  Accounts Receivable       EUR 3.32
+DR  1200  Accounts Receivable       EUR 3.42
 DR  6200  Marketing Expense         EUR 3.00
     CR  4101  Ride Revenue — Estonia     EUR 5.18
-    CR  2101  VAT Payable — Estonia      EUR 1.14
+    CR  2101  VAT Payable — Estonia      EUR 1.24
 
-Debits (3.32 + 3.00 = 6.32) = Credits (5.18 + 1.14 = 6.32)  ✓
+Debits (3.42 + 3.00 = 6.42) = Credits (5.18 + 1.24 = 6.42)  ✓
 ```
 
 The mathematical invariant that guarantees balance: `(gross - coupon) + coupon = net_revenue + vat = gross`.
@@ -254,7 +260,7 @@ The mathematical invariant that guarantees balance: `(gross - coupon) + coupon =
 | 4103 | Ride Revenue — Latvia | Revenue | Credit |
 | 6200 | Marketing Expense — Coupons | Expense | Debit |
 
-Revenue and VAT accounts are country-specific because tax rates and reporting obligations differ per jurisdiction (Estonia 22%, Finland 24%, Latvia 21%). Accounts Receivable and Marketing Expense are consolidated globally — the same account code regardless of country.
+Revenue and VAT accounts are country-specific because tax rates and reporting obligations differ per jurisdiction (Estonia 24%, Finland 25.5%, Latvia 21%). Accounts Receivable and Marketing Expense are consolidated globally — the same account code regardless of country.
 
 ### Separation of Chart of Accounts and Posting Rules
 
@@ -335,27 +341,26 @@ The general ledger uses a **delete+insert** pattern implemented via a dbt pre-ho
 
 This makes the GL **append-only across periods**: once January is processed and February begins, January's data is untouched. But the current period can be safely reprocessed at any time — the pre-hook clears it before re-inserting. On first run (or `--full-refresh`), the pre-hook is skipped because there is no existing table to delete from.
 
-The trial balance and reports are full-rebuild tables that re-aggregate from the entire GL each run. Since the GL accumulates data across periods, these downstream models always reflect the complete picture.
+The same incremental pattern extends to `stg_rides`, `int_journal_entries`, and `fct_trial_balance` — each deletes and reinserts only the current period's rows. This means that historical data at every layer is stable and auditable. Reports are full-rebuild tables that re-aggregate from the trial balance each run.
 
 ---
 
 ## Airflow Orchestration
 
-The DAG `monthly_financial_pipeline` (`airflow/dags/monthly_financial_pipeline.py`) runs on the 1st of each month and processes the previous month's data.
+The DAG `monthly_financial_pipeline` (`airflow/dags/monthly_financial_pipeline.py`) runs on the 1st of each month and processes the previous month's data. It is organized into six sequential **TaskGroups** that mirror the dbt model layers, each running its own `dbt run --select` followed by `dbt test --select`:
 
 ```
-generate_source_data  →  dbt_seed  →  dbt_run  →  dbt_test
+generate_source_data → seed → staging → intermediate → marts → reports
 ```
 
-**Task 1 — generate_source_data**: Runs the Python script with the period's start and end dates derived from Airflow's `execution_date`.
+1. **generate_source_data** — Python script produces ride records for the target month.
+2. **seed** — Two parallel sub-tasks: `seed_rides` (monthly data) and `seed_reference_data` (static reference tables).
+3. **staging** — Runs and tests `stg_rides`, `stg_account_mapping`, `stg_chart_of_accounts`.
+4. **intermediate** — Runs and tests `int_journal_entries`, including the journal balance assertion.
+5. **marts** — Runs and tests the GL first, then (only if GL tests pass) runs and tests the trial balance.
+6. **reports** — Runs and tests all report models, including the balance sheet equation assertion.
 
-**Task 2 — dbt_seed**: Loads the freshly generated `rides.csv` into DuckDB. Only `rides` is re-seeded; the chart of accounts and posting rules are static reference data.
-
-**Task 3 — dbt_run**: Executes all dbt models with `--vars` passing `start_date` and `end_date`. The staging layer filters to the period, the GL deletes+inserts only that period's rows, the trial balance rebuilds from the full GL, and reports scope to the appropriate period.
-
-**Task 4 — dbt_test**: Validates all schema tests and custom accounting invariant tests. A test failure stops the pipeline and prevents downstream consumers from reading inconsistent data.
-
-The DAG has `catchup=True`, so enabling it will backfill all months from January 2026 to the current date. `max_active_runs=1` prevents concurrent runs from conflicting on the DuckDB file lock.
+This layer-by-layer design means a test failure in staging prevents wasted computation on downstream layers. The DAG has `catchup=True` for backfill and `max_active_runs=1` to prevent DuckDB file lock conflicts.
 
 ---
 
@@ -397,8 +402,10 @@ The DAG has `catchup=True`, so enabling it will backfill all months from January
 │   │   │   ├── fct_trial_balance.sql     # Account aggregation by period
 │   │   │   └── schema.yml
 │   │   └── reports/
-│   │       ├── rpt_income_statement.sql  # P&L for current period
-│   │       ├── rpt_balance_sheet.sql     # Cumulative balance sheet
+│   │       ├── rpt_income_statement_detail.sql   # Account-level P&L
+│   │       ├── rpt_income_statement_summary.sql  # Period-level P&L totals
+│   │       ├── rpt_balance_sheet_detail.sql      # Account-level balance sheet
+│   │       ├── rpt_balance_sheet_summary.sql     # Equation validation
 │   │       └── schema.yml
 │   ├── seeds/
 │   │   ├── rides.csv
@@ -459,7 +466,7 @@ The following extensions would bring the pipeline closer to production readiness
 
 ## Troubleshooting
 
-**`SHOW TABLES` returns no rows in DuckDB CLI:** Tables are created in named schemas. Use `SELECT * FROM data_warehouse.rpt_income_statement` or inspect schemas with `SELECT schema_name FROM information_schema.schemata`.
+**`SHOW TABLES` returns no rows in DuckDB CLI:** Tables are created in named schemas. Use `SELECT * FROM data_warehouse.rpt_income_statement_detail` or inspect schemas with `SELECT schema_name FROM information_schema.schemata`.
 
 **`dbt seed` fails after editing `seeds/schema.yml`:** Clear the partial parse cache: `dbt clean && dbt seed --profiles-dir /opt/dbt`.
 

@@ -3,6 +3,12 @@
     =============================
     Explode each ride into double-entry journal lines.
 
+    Materialized as an INCREMENTAL TABLE (delete+insert per period)
+    so that journal entries are persisted and auditable.  This allows
+    downstream consumers and auditors to inspect the exact journal
+    lines that were posted for any historical period, even after the
+    source seeds have been refreshed.
+
     Rides without a coupon produce 3 lines; rides with a coupon
     produce 4 lines.  Zero-amount lines are never posted — this
     is standard accounting practice.
@@ -15,6 +21,17 @@
     Invariant:  total debits = total credits  per order_id
       (sum_with_vat − coupon) + coupon  =  amount + vat_amount  =  sum_with_vat
 */
+
+{{
+    config(
+        materialized='incremental',
+        unique_key='journal_entry_id',
+        on_schema_change='append_new_columns',
+        pre_hook=[
+            "{{ delete_period('ride_date') }}"
+        ] if is_incremental() else []
+    )
+}}
 
 with rides as (
     select * from {{ ref('stg_rides') }}
@@ -57,7 +74,10 @@ journal_lines as (
         end as line_amount,
 
         -- Carry coupon code for traceability
-        r.coupon_code
+        r.coupon_code,
+
+        -- Audit metadata
+        current_timestamp as loaded_at
 
     from rides r
     cross join line_types lt

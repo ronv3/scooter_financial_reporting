@@ -4,6 +4,12 @@
     Across the entire general ledger, the sum of all signed_amount
     values must be zero (total debits = total credits globally).
 
+    Threshold: 0.001 (one mill).  All underlying amounts are
+    decimal(12,2) and the pipeline uses only addition/subtraction,
+    so the imbalance should be exactly zero.  The 0.001 margin is a
+    defensive guard against floating-point artefacts while remaining
+    below one cent — the smallest reportable unit.
+
     This validates the ledger as a whole, complementing the
     per-order test in assert_journal_entries_balance.
 */
@@ -22,4 +28,4 @@ select
     net_signed_amount,
     abs(total_debit - total_credit) as imbalance
 from totals
-where abs(total_debit - total_credit) > 0.01
+where abs(total_debit - total_credit) > 0.001
