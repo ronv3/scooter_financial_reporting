@@ -36,6 +36,33 @@ models:
         tests:
           - not_null
 
+  - name: stg_rides_quarantine
+    description: >
+      Rows rejected by stg_rides guardrails, tagged with rejection reason.
+      Provides data quality visibility: analytics teams can monitor rejection
+      volumes, investigate individual records, and identify upstream issues.
+      Together with stg_rides, accounts for every source row in each period.
+    columns:
+      - name: quarantine_id
+        description: "Deterministic surrogate key (md5 of order_id + ride_id + reason)"
+        tests:
+          - not_null
+          - unique
+      - name: order_id
+        description: "Original order identifier"
+        tests:
+          - not_null
+      - name: rejection_reason
+        description: "Why the row was rejected: null_financial_amount, outlier_amount, or duplicate_order"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['null_financial_amount', 'outlier_amount', 'duplicate_order']
+      - name: quarantined_at
+        description: "Timestamp when this row was quarantined"
+        tests:
+          - not_null
+
   - name: stg_account_mapping
     description: >
       Journal posting rules. Maps line_type + country → account_code.

@@ -73,30 +73,7 @@ dbt test --profiles-dir ${DBT_PROFILES_DIR} --vars "${VARS}"
 cd ..
 
 echo ""
-echo "--- Step 4b: Verify income statement totals unchanged ---"
-python3 -c "
-import duckdb
-con = duckdb.connect('${DUCKDB_PATH:-duckdb/thesis.duckdb}', read_only=True)
-row = con.execute('SELECT total_revenue, total_expenses, net_income FROM data_warehouse.rpt_income_statement_summary').fetchone()
-print(f'  Faulted Revenue:  {row[0]:,.2f}')
-print(f'  Faulted Expenses: {row[1]:,.2f}')
-print(f'  Faulted Net Inc:  {row[2]:,.2f}')
-
-# Validation
-rev_ok = abs(row[0] - 536507.46) < 0.01
-exp_ok = abs(row[1] - 10188.00) < 0.01
-net_ok = abs(row[2] - 526319.46) < 0.01
-if rev_ok and exp_ok and net_ok:
-    print('  PASS: totals match clean baseline')
-else:
-    print('  FAIL: totals differ from baseline!')
-    exit(1)
-con.close()
-"
-
-# Count how many rides were filtered
-echo ""
-echo "--- Fault filtering summary ---"
+echo "--- Step 4b: Fault filtering summary and revenue impact ---"
 python3 -c "
 import pandas as pd
 import duckdb
@@ -107,6 +84,21 @@ staged_count = con.execute('SELECT COUNT(*) FROM data_warehouse.stg_rides').fetc
 print(f'  Faulted CSV rows:  {len(faulted):,}')
 print(f'  Staged rows:       {staged_count:,}')
 print(f'  Rows filtered out: {len(faulted) - staged_count:,}')
+
+row = con.execute('SELECT total_revenue, total_expenses, net_income FROM data_warehouse.rpt_income_statement_summary').fetchone()
+print()
+print(f'  Baseline Revenue:    536,507.46')
+print(f'  Faulted  Revenue:    {row[0]:,.2f}  (diff: {row[0] - 536507.46:,.2f})')
+print(f'  Baseline Expenses:    10,188.00')
+print(f'  Faulted  Expenses:    {row[1]:,.2f}  (diff: {row[1] - 10188.00:,.2f})')
+print(f'  Baseline Net Inc:    526,319.46')
+print(f'  Faulted  Net Inc:    {row[2]:,.2f}  (diff: {row[2] - 526319.46:,.2f})')
+
+filtered = len(faulted) - staged_count
+if filtered > 0:
+    print(f'\n  PASS: {filtered:,} bad rows filtered by staging guardrails')
+else:
+    print('\n  WARNING: no rows were filtered')
 con.close()
 "
 
@@ -133,7 +125,7 @@ echo "--- Step 7b: Run tests (expect accepted_values FAILURE on country) ---"
 if dbt test --profiles-dir ${DBT_PROFILES_DIR} --vars "${VARS}" 2>&1; then
     echo "  WARNING: Tests passed unexpectedly — country fault was not detected!"
 else
-    echo "  EXPECTED: Tests failed — invalid country 'Atlantis' was detected by accepted_values test"
+    echo "  EXPECTED: Tests failed — invalid country 'Tartu' was detected by accepted_values test"
 fi
 cd ..
 

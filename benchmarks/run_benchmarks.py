@@ -80,6 +80,27 @@ def get_machine_specs() -> dict:
         "cpu_count": os.cpu_count(),
     }
 
+    # Get CPU model from /proc/cpuinfo (works in Docker on Linux)
+    try:
+        with open("/proc/cpuinfo") as f:
+            for line in f:
+                if line.startswith("model name"):
+                    specs["cpu_model"] = line.split(":", 1)[1].strip()
+                    break
+    except (FileNotFoundError, PermissionError):
+        pass
+
+    # Get total memory from /proc/meminfo
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemTotal"):
+                    mem_kb = int(line.split()[1])
+                    specs["memory_total_gb"] = round(mem_kb / 1024 / 1024, 1)
+                    break
+    except (FileNotFoundError, PermissionError):
+        pass
+
     # Try to get dbt version
     try:
         result = subprocess.run(

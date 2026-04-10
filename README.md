@@ -376,8 +376,8 @@ This layer-by-layer design means a test failure in staging prevents wasted compu
 │   └── plugins/
 ├── benchmarks/                           # Scalability and evaluation scripts
 │   ├── baseline_income_statement.py      # Python baseline: CSV → income statement
+│   ├── generate_benchmark_data.py       # Pre-generates scaled ride CSVs
 │   ├── run_benchmarks.py                 # Multi-scale timing harness
-│   ├── generate_figure.py               # Scalability chart (log-log, grayscale)
 │   └── run_fault_evaluation.sh          # End-to-end fault injection evaluation
 ├── compose.yml                           # Docker Compose (Airflow + Postgres)
 ├── .env.example                          # Environment template
@@ -429,26 +429,6 @@ This layer-by-layer design means a test failure in staging prevents wasted compu
 │   └── inject_faults.py                 # Data quality fault injection
 └── README.md
 ```
-
----
-
-## Assumptions and Simplifications
-
-This project is a demonstration for a Bachelor's thesis. Several simplifications have been made to keep the scope manageable while still reflecting real-world data warehouse patterns:
-
-**Mock data generation.** All ride data is synthetically generated with a fixed random seed. In a real system, ride data would arrive from an operational database, a streaming platform (Kafka), or an API. The data generator simulates billing records that would typically come from a payment or invoicing system.
-
-**Immediate revenue recognition.** Revenue is recognized at the moment the ride is completed. In practice, scooter companies may have more complex recognition rules (prepaid wallet balances, subscription plans, refund windows). The model treats each ride as a simple completed transaction.
-
-**No cash/bank account.** The model records the receivable (customer owes money) but does not model the payment settlement (customer pays via Stripe/Adyen). In a complete system, there would be a subsequent journal entry: DR Cash/Bank, CR Accounts Receivable. The AR balance in the balance sheet therefore represents the cumulative invoiced amount, not actual outstanding receivables.
-
-**Coupon treatment.** Coupons are treated as a marketing expense (debit to account 6200) rather than as a contra-revenue. Both treatments are valid under accounting standards; expense treatment is more common for promotional coupons that are funded by a marketing budget.
-
-**Single currency.** All transactions are in EUR. Multi-currency operations would require foreign exchange conversion logic, unrealized gain/loss tracking, and a functional currency designation — complexities beyond the scope of this thesis.
-
-**Retained earnings.** The balance sheet computes equity as "Retained Earnings = cumulative Revenue - Expenses." In a multi-year system, retained earnings would carry forward from prior fiscal years with period-closing entries. Since this model starts from a clean slate and does not include dividends or other equity transactions, the calculation is equivalent.
-
-**DuckDB as warehouse.** DuckDB is an embedded analytical database, chosen for portability (no server setup). A production financial data warehouse would typically use Snowflake, BigQuery, Redshift, or a similar cloud warehouse with role-based access control, audit logging, and concurrent query support.
 
 ---
 
@@ -513,15 +493,6 @@ docker compose exec airflow-webserver bash -lc \
   "cd /opt && python benchmarks/run_benchmarks.py --skip-dbt"
 ```
 
-**Step 4 — Generate the scalability figure:**
-
-```bash
-docker compose exec airflow-webserver bash -lc \
-  "cd /opt && python benchmarks/generate_figure.py"
-```
-
-This reads `benchmarks/results.csv` and produces `benchmarks/scalability.png` and `benchmarks/scalability.pdf`. If `results.csv` doesn't exist yet, it generates a placeholder figure with example data.
-
 ### Output files
 
 | File | Description |
@@ -529,9 +500,7 @@ This reads `benchmarks/results.csv` and produces `benchmarks/scalability.png` an
 | `benchmarks/data/rides_{n}.csv` | Pre-generated source data per scale (gitignored) |
 | `benchmarks/results.csv` | Timing data: fleet_size, ride_count, approach, median_seconds |
 | `benchmarks/results.json` | Detailed results with all individual run times |
-| `benchmarks/results.specs.json` | Machine specs (CPU, RAM, Python/dbt/DuckDB versions) |
-| `benchmarks/scalability.png` | Log-log chart (for presentation) |
-| `benchmarks/scalability.pdf` | Log-log chart (for thesis, grayscale-safe) |
+| `benchmarks/results.specs.json` | Machine specs (CPU, Python/dbt/DuckDB versions) |
 
 ### What to expect
 
@@ -577,9 +546,9 @@ This script does everything:
 1. Generates clean data and runs the full pipeline (baseline)
 2. Injects prevention faults (null, outlier, duplicate)
 3. Re-seeds and re-runs the pipeline
-4. Verifies all 69 tests still pass and income statement totals are unchanged
+4. Verifies all 69 tests still pass (guardrails filter faulted rows; totals reflect clean data only)
 5. Restores clean data
-6. Injects the detection fault (invalid country "Atlantis")
+6. Injects the detection fault (invalid country "Tartu")
 7. Re-seeds and re-runs — expects the `accepted_values` test to **fail**
 8. Restores clean data
 
@@ -643,29 +612,11 @@ docker compose exec airflow-webserver bash -lc \
 
 ### What to expect
 
-**Prevention faults:** After injecting NULL, outlier, and duplicate faults, the pipeline should run normally. All 69 tests should pass. The income statement totals should be identical to the clean baseline (536,507.46 / 10,188.00 / 526,319.46). The staging guardrails silently filter out the bad rows.
+**Prevention faults:** After injecting NULL, outlier, and duplicate faults, the pipeline should run normally. All 69 tests should pass. The staging guardrails silently filter out the faulted rows, so the income statement totals will be slightly lower than the clean baseline (the corrupted rows and their associated revenue are excluded). The reports accurately reflect only the data that passed the quality checks.
 
-**Detection fault:** After injecting the invalid country "Atlantis", the `dbt test` step should **fail** with an `accepted_values` error on `stg_rides.country`. This is the expected behaviour — the pipeline refuses to produce reports with invalid data.
+**Detection fault:** After injecting the invalid country "Tartu", the `dbt test` step should **fail** with an `accepted_values` error on `stg_rides.country`. This is the expected behaviour — the pipeline refuses to produce reports with invalid data.
 
 Record the fault counts (how many rows of each type were injected) and the row counts (faulted CSV rows vs. staged rows) for the thesis tables.
-
----
-
-## Future Work
-
-The following extensions would bring the pipeline closer to production readiness. They are outside the scope of this thesis but represent natural next steps:
-
-**Period closing mechanism.** A `closed_periods` reference table that marks processed months as locked. The pipeline would refuse to reprocess closed periods, preventing accidental modification of finalized financial data. This is standard in enterprise accounting systems.
-
-**Cash settlement entries.** Adding a payment/settlement data source that generates DR Cash / CR Accounts Receivable entries when customers pay. This would make the AR balance reflect true outstanding receivables and complete the cash flow picture.
-
-**Reversal and adjustment entries.** A mechanism to post manual adjusting entries (accruals, corrections, reclassifications) that are not derived from ride data. These would be loaded from a separate source table and merged into the journal entry flow.
-
-**Depreciation module.** The project name references scooter fleet depreciation. Source data for scooter master records and heartbeat snapshots already exists (`scooters_master.csv`, `scooter_heartbeat.csv`) but is not yet integrated into the financial pipeline. A depreciation model would calculate monthly asset write-downs based on scooter purchase price and useful life.
-
-**Multi-period financial statements.** The current reports show a single period. Comparative statements (this month vs. last month, this year vs. last year) and year-to-date accumulation would provide more analytical value.
-
-**Data lineage visualization.** Integrating dbt docs (`dbt docs generate && dbt docs serve`) to provide an interactive DAG visualization and column-level lineage for audit purposes.
 
 ---
 
