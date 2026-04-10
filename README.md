@@ -459,8 +459,10 @@ The `benchmarks/` directory measures execution time at increasing data scales, c
 | # | Approach | What it does |
 |---|----------|-------------|
 | 1 | **Python baseline** | Reads rides.csv with pandas, computes income statement. No database, no layers — the shortest path from CSV to report. |
-| 2 | **dbt full-refresh** | The thesis pipeline processing all data from scratch (seed + run all models). |
+| 2 | **dbt full-refresh** | The thesis pipeline processing all data from scratch (rides loaded via DuckDB COPY, then full dbt run). |
 | 3 | **dbt incremental** | The thesis pipeline processing only December, with Jan–Nov already loaded. How the pipeline is designed to run in production. |
+
+> **Note on data loading:** The benchmark loads the rides table directly into DuckDB via `COPY` rather than `dbt seed`. `dbt seed` is designed for small reference files and runs out of memory at large scales (6.6M+ rows). The production pipeline uses `dbt seed` normally — this is a benchmark-only adaptation. Reference tables (`account_mapping`, `chart_of_accounts`) are still seeded via dbt in both cases.
 
 Data is scaled by increasing the fleet size. Four scales at roughly 10× increments: 90 scooters (~131K rides), 900 (~1.3M), 4,500 (~6.6M), and 9,000 (~13.1M). Each approach is timed 3 times per scale; the median is reported.
 
@@ -472,7 +474,16 @@ Ensure the Docker containers are running (see [Setup](#setup)).
 
 All commands are run from your **host terminal** in the project root directory.
 
-**Step 1 — Validate the Python baseline produces correct totals (quick sanity check):**
+**Step 1 — Pre-generate source data for all scales (run once):**
+
+```bash
+docker compose exec airflow-webserver bash -lc \
+  "cd /opt && python -u benchmarks/generate_benchmark_data.py --scales 90,900,4500,9000"
+```
+
+This generates one `rides_{n}.csv` per scale into `benchmarks/data/` (gitignored). Generation is slow at the largest scales (~10–30 min total) but only needs to be done once. Subsequent benchmark runs load from these files directly — no regeneration.
+
+**Step 2 — Validate the Python baseline produces correct totals (quick sanity check):**
 
 ```bash
 docker compose exec airflow-webserver bash -lc \
@@ -481,18 +492,18 @@ docker compose exec airflow-webserver bash -lc \
 
 Expected output: income statement printed, followed by `VALIDATION PASSED`. The totals must be: Revenue 536,507.46 / Expenses 10,188.00 / Net Income 526,319.46.
 
-**Step 2 — Run the full benchmark suite:**
+**Step 3 — Run the full benchmark suite:**
 
 ```bash
 docker compose exec airflow-webserver bash -lc \
-  "cd /opt && python benchmarks/run_benchmarks.py"
+  "cd /opt && python -u benchmarks/run_benchmarks.py --scales 90,900,4500,9000 --runs 3"
 ```
 
 This will take a while (potentially 30+ minutes at the largest scales). For a quick test with just the two smallest scales:
 
 ```bash
 docker compose exec airflow-webserver bash -lc \
-  "cd /opt && python benchmarks/run_benchmarks.py --scales 90,900 --runs 3"
+  "cd /opt && python -u benchmarks/run_benchmarks.py --scales 90,900 --runs 3"
 ```
 
 To run only the Python baseline (no dbt, much faster):
@@ -502,7 +513,7 @@ docker compose exec airflow-webserver bash -lc \
   "cd /opt && python benchmarks/run_benchmarks.py --skip-dbt"
 ```
 
-**Step 3 — Generate the scalability figure:**
+**Step 4 — Generate the scalability figure:**
 
 ```bash
 docker compose exec airflow-webserver bash -lc \
@@ -515,6 +526,7 @@ This reads `benchmarks/results.csv` and produces `benchmarks/scalability.png` an
 
 | File | Description |
 |------|-------------|
+| `benchmarks/data/rides_{n}.csv` | Pre-generated source data per scale (gitignored) |
 | `benchmarks/results.csv` | Timing data: fleet_size, ride_count, approach, median_seconds |
 | `benchmarks/results.json` | Detailed results with all individual run times |
 | `benchmarks/results.specs.json` | Machine specs (CPU, RAM, Python/dbt/DuckDB versions) |

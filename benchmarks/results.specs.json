@@ -1,0 +1,8 @@
+{
+  "platform": "Linux-6.12.54-linuxkit-x86_64-with-glibc2.36",
+  "processor": "",
+  "python_version": "3.11.10",
+  "cpu_count": 12,
+  "dbt_core_version": "At least one plugin is out of date with dbt-core.",
+  "dbt_duckdb_version": "- duckdb: 1.9.1 - Update available!"
+}

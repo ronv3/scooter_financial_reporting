@@ -1,0 +1,101 @@
+[
+  {
+    "fleet_size": 90,
+    "ride_count": 131412,
+    "approach": "python_baseline",
+    "median_seconds": 0.669,
+    "all_times": [
+      0.7921295969999846,
+      0.6689778890000184,
+      0.471192316999975
+    ]
+  },
+  {
+    "fleet_size": 90,
+    "ride_count": 131412,
+    "approach": "dbt_full_refresh",
+    "median_seconds": 23.1524,
+    "all_times": [
+      37.71254322699997,
+      23.152416164999977,
+      20.139810170000032
+    ]
+  },
+  {
+    "fleet_size": 90,
+    "ride_count": 131412,
+    "approach": "dbt_incremental",
+    "median_seconds": 10.0804,
+    "all_times": [
+      11.077491143000032,
+      10.080428975000018,
+      10.05823382799997
+    ]
+  },
+  {
+    "fleet_size": 900,
+    "ride_count": 1315419,
+    "approach": "python_baseline",
+    "median_seconds": 6.3283,
+    "all_times": [
+      6.908946584000034,
+      5.584616447999963,
+      6.328271303999998
+    ]
+  },
+  {
+    "fleet_size": 900,
+    "ride_count": 1315419,
+    "approach": "dbt_full_refresh",
+    "median_seconds": 44.076,
+    "all_times": [
+      42.978790597,
+      44.320011252000086,
+      44.07599992500002
+    ]
+  },
+  {
+    "fleet_size": 900,
+    "ride_count": 1315419,
+    "approach": "dbt_incremental",
+    "median_seconds": 15.0141,
+    "all_times": [
+      15.014067190999981,
+      15.080273725999973,
+      12.810659979999969
+    ]
+  },
+  {
+    "fleet_size": 4500,
+    "ride_count": 6570493,
+    "approach": "python_baseline",
+    "median_seconds": 79.9755,
+    "all_times": [
+      51.83741563000001,
+      85.709056282,
+      79.97546508599999
+    ]
+  },
+  {
+    "fleet_size": 4500,
+    "ride_count": 6570493,
+    "approach": "dbt_full_refresh",
+    "median_seconds": 190.0392,
+    "all_times": [
+      196.61902014199995,
+      190.03919409100013,
+      171.67769299299994
+    ]
+  },
+  {
+    "fleet_size": 4500,
+    "ride_count": 6570493,
+    "approach": "dbt_incremental",
+    "median_seconds": 62.2193,
+    "all_times": [
+      107.37772335099999,
+      61.59853715400004,
+      62.219276427000295
+    ]
+  }
+]

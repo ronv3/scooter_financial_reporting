@@ -19,6 +19,9 @@ duckdb/*.wal
 exports/*.csv
 exports/*.xml
 
+# Benchmark pre-generated data (large files, regenerate with generate_benchmark_data.py)
+benchmarks/data/
+
 # OS/editor
 .DS_Store
 .idea/

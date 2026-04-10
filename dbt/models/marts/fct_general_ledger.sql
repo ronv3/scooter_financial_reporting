@@ -38,6 +38,10 @@
 
 with journal as (
     select * from {{ ref('int_journal_entries') }}
+    {% if is_incremental() %}
+    where ride_date >= {{ get_start_date() }}
+      and ride_date <= {{ get_end_date() }}
+    {% endif %}
 ),
 
 posting_rules as (
