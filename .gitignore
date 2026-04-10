@@ -22,6 +22,9 @@ exports/*.xml
 # Benchmark pre-generated data (large files, regenerate with generate_benchmark_data.py)
 benchmarks/data/
 
+# Clean backup files produced by fault injection script
+*.clean_backup
+
 # OS/editor
 .DS_Store
 .idea/

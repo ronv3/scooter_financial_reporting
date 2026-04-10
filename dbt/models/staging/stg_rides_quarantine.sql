@@ -158,4 +158,4 @@ select
     rejection_reason,
     current_timestamp as quarantined_at
 
-from all_rejects
+from numbered_rejects
