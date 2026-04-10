@@ -458,7 +458,7 @@ All commands are run from your **host terminal** in the project root directory.
 
 ```bash
 docker compose exec airflow-webserver bash -lc \
-  "cd /opt && python -u benchmarks/generate_benchmark_data.py --scales 90,900,4500,9000"
+  "cd /opt && python -u benchmarks/generate_benchmark_data.py --scales 90,900,4500"
 ```
 
 This generates one `rides_{n}.csv` per scale into `benchmarks/data/` (gitignored). Generation is slow at the largest scales (~10–30 min total) but only needs to be done once. Subsequent benchmark runs load from these files directly — no regeneration.
@@ -476,7 +476,7 @@ Expected output: income statement printed, followed by `VALIDATION PASSED`. The 
 
 ```bash
 docker compose exec airflow-webserver bash -lc \
-  "cd /opt && python -u benchmarks/run_benchmarks.py --scales 90,900,4500,9000 --runs 3"
+  "cd /opt && python -u benchmarks/run_benchmarks.py --scales 90,900,4500 --runs 3"
 ```
 
 This will take a while (potentially 30+ minutes at the largest scales). For a quick test with just the two smallest scales:

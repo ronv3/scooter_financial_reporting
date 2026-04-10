@@ -22,9 +22,9 @@
 #
 set -euo pipefail
 
-DBT_DIR="${DBT_DIR:-dbt}"
-DBT_PROFILES_DIR="${DBT_PROFILES_DIR:-dbt}"
-SCRIPTS_DIR="${SCRIPTS_DIR:-scripts}"
+DBT_DIR="${DBT_DIR:-/opt/dbt}"
+DBT_PROFILES_DIR="${DBT_PROFILES_DIR:-/opt/dbt}"
+SCRIPTS_DIR="${SCRIPTS_DIR:-/opt/scripts}"
 
 VARS='{"start_date": "2026-01-01", "end_date": "2026-12-31"}'
 
@@ -85,14 +85,15 @@ print(f'  Faulted CSV rows:  {len(faulted):,}')
 print(f'  Staged rows:       {staged_count:,}')
 print(f'  Rows filtered out: {len(faulted) - staged_count:,}')
 
-row = con.execute('SELECT total_revenue, total_expenses, net_income FROM data_warehouse.rpt_income_statement_summary').fetchone()
+row = con.execute('SELECT SUM(total_revenue), SUM(total_expenses), SUM(net_income) FROM data_warehouse.rpt_income_statement_summary').fetchone()
+revenue, expenses, net = float(row[0]), float(row[1]), float(row[2])
 print()
 print(f'  Baseline Revenue:    536,507.46')
-print(f'  Faulted  Revenue:    {row[0]:,.2f}  (diff: {row[0] - 536507.46:,.2f})')
+print(f'  Faulted  Revenue:    {revenue:>12,.2f}  (diff: {revenue - 536507.46:+,.2f})')
 print(f'  Baseline Expenses:    10,188.00')
-print(f'  Faulted  Expenses:    {row[1]:,.2f}  (diff: {row[1] - 10188.00:,.2f})')
+print(f'  Faulted  Expenses:    {expenses:>12,.2f}  (diff: {expenses - 10188.00:+,.2f})')
 print(f'  Baseline Net Inc:    526,319.46')
-print(f'  Faulted  Net Inc:    {row[2]:,.2f}  (diff: {row[2] - 526319.46:,.2f})')
+print(f'  Faulted  Net Inc:    {net:>12,.2f}  (diff: {net - 526319.46:+,.2f})')
 
 filtered = len(faulted) - staged_count
 if filtered > 0:
