@@ -546,7 +546,7 @@ This script does everything:
 1. Generates clean data and runs the full pipeline (baseline)
 2. Injects prevention faults (null, outlier, duplicate)
 3. Re-seeds and re-runs the pipeline
-4. Verifies all 69 tests still pass (guardrails filter faulted rows; totals reflect clean data only)
+4. Verifies all 75 tests still pass (guardrails filter faulted rows; totals reflect clean data only)
 5. Restores clean data
 6. Injects the detection fault (invalid country "Tartu")
 7. Re-seeds and re-runs — expects the `accepted_values` test to **fail**
@@ -612,7 +612,7 @@ docker compose exec airflow-webserver bash -lc \
 
 ### What to expect
 
-**Prevention faults:** After injecting NULL, outlier, and duplicate faults, the pipeline should run normally. All 69 tests should pass. The staging guardrails silently filter out the faulted rows, so the income statement totals will be slightly lower than the clean baseline (the corrupted rows and their associated revenue are excluded). The reports accurately reflect only the data that passed the quality checks.
+**Prevention faults:** After injecting NULL, outlier, and duplicate faults, the pipeline should run normally. All 75 tests should pass. The staging guardrails silently filter out the faulted rows, so the income statement totals will be slightly lower than the clean baseline (the corrupted rows and their associated revenue are excluded). The reports accurately reflect only the data that passed the quality checks.
 
 **Detection fault:** After injecting the invalid country "Tartu", the `dbt test` step should **fail** with an `accepted_values` error on `stg_rides.country`. This is the expected behaviour — the pipeline refuses to produce reports with invalid data.
 
