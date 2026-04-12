@@ -1,0 +1,10 @@
+fleet_size,ride_count,approach,median_seconds
+90,131412,python_baseline,0.669
+90,131412,dbt_full_refresh,23.1524
+90,131412,dbt_incremental,10.0804
+900,1315419,python_baseline,6.3283
+900,1315419,dbt_full_refresh,44.076
+900,1315419,dbt_incremental,15.0141
+4500,6570493,python_baseline,79.9755
+4500,6570493,dbt_full_refresh,190.0392
+4500,6570493,dbt_incremental,62.2193

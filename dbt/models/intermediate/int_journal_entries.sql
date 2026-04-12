@@ -35,6 +35,10 @@
 
 with rides as (
     select * from {{ ref('stg_rides') }}
+    {% if is_incremental() %}
+    where ride_date >= {{ get_start_date() }}
+      and ride_date <= {{ get_end_date() }}
+    {% endif %}
 ),
 
 -- Spine of possible journal line types per ride

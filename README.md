@@ -374,6 +374,11 @@ This layer-by-layer design means a test failure in staging prevents wasted compu
 │   │   └── monthly_financial_pipeline.py # Monthly orchestration DAG
 │   ├── logs/
 │   └── plugins/
+├── benchmarks/                           # Scalability and evaluation scripts
+│   ├── baseline_income_statement.py      # Python baseline: CSV → income statement
+│   ├── generate_benchmark_data.py       # Pre-generates scaled ride CSVs
+│   ├── run_benchmarks.py                 # Multi-scale timing harness
+│   └── run_fault_evaluation.sh          # End-to-end fault injection evaluation
 ├── compose.yml                           # Docker Compose (Airflow + Postgres)
 ├── .env.example                          # Environment template
 ├── data/                                 # Generated source CSVs (archive)
@@ -390,7 +395,7 @@ This layer-by-layer design means a test failure in staging prevents wasted compu
 │   ├── models/
 │   │   ├── sources.yml                   # dbt source declarations
 │   │   ├── staging/
-│   │   │   ├── stg_rides.sql
+│   │   │   ├── stg_rides.sql             # Incremental + guardrails (NULL, outlier, dedup)
 │   │   │   ├── stg_account_mapping.sql   # Journal posting rules
 │   │   │   ├── stg_chart_of_accounts.sql # Account master
 │   │   │   └── schema.yml
@@ -420,47 +425,198 @@ This layer-by-layer design means a test failure in staging prevents wasted compu
 ├── duckdb/                               # DuckDB database file
 ├── exports/                              # Exported reports
 ├── scripts/
-│   └── create_source_data.py             # Source data generator
+│   ├── create_source_data.py             # Source data generator
+│   └── inject_faults.py                 # Data quality fault injection
 └── README.md
 ```
 
 ---
 
-## Assumptions and Simplifications
+## Evaluation: Scalability Benchmarks
 
-This project is a demonstration for a Bachelor's thesis. Several simplifications have been made to keep the scope manageable while still reflecting real-world data warehouse patterns:
+The `benchmarks/` directory measures execution time at increasing data scales, comparing three approaches:
 
-**Mock data generation.** All ride data is synthetically generated with a fixed random seed. In a real system, ride data would arrive from an operational database, a streaming platform (Kafka), or an API. The data generator simulates billing records that would typically come from a payment or invoicing system.
+| # | Approach | What it does |
+|---|----------|-------------|
+| 1 | **Python baseline** | Reads rides.csv with pandas, computes income statement. No database, no layers — the shortest path from CSV to report. |
+| 2 | **dbt full-refresh** | The thesis pipeline processing all data from scratch (rides loaded via DuckDB COPY, then full dbt run). |
+| 3 | **dbt incremental** | The thesis pipeline processing only December, with Jan–Nov already loaded. How the pipeline is designed to run in production. |
 
-**Immediate revenue recognition.** Revenue is recognized at the moment the ride is completed. In practice, scooter companies may have more complex recognition rules (prepaid wallet balances, subscription plans, refund windows). The model treats each ride as a simple completed transaction.
+> **Note on data loading:** The benchmark loads the rides table directly into DuckDB via `COPY` rather than `dbt seed`. `dbt seed` is designed for small reference files and runs out of memory at large scales (6.6M+ rows). The production pipeline uses `dbt seed` normally — this is a benchmark-only adaptation. Reference tables (`account_mapping`, `chart_of_accounts`) are still seeded via dbt in both cases.
 
-**No cash/bank account.** The model records the receivable (customer owes money) but does not model the payment settlement (customer pays via Stripe/Adyen). In a complete system, there would be a subsequent journal entry: DR Cash/Bank, CR Accounts Receivable. The AR balance in the balance sheet therefore represents the cumulative invoiced amount, not actual outstanding receivables.
+Data is scaled by increasing the fleet size. Three scales at roughly 10× increments: 90 scooters (~131K rides), 900 (~1.3M), and 4,500 (~6.6M). Each approach is timed 3 times per scale; the median is reported. A fourth scale (9,000 scooters, ~13.1M rides) was attempted but exceeded the Docker container's 12 GB memory allocation during dbt processing, causing out-of-memory termination.
 
-**Coupon treatment.** Coupons are treated as a marketing expense (debit to account 6200) rather than as a contra-revenue. Both treatments are valid under accounting standards; expense treatment is more common for promotional coupons that are funded by a marketing budget.
+### Prerequisites
 
-**Single currency.** All transactions are in EUR. Multi-currency operations would require foreign exchange conversion logic, unrealized gain/loss tracking, and a functional currency designation — complexities beyond the scope of this thesis.
+Ensure the Docker containers are running (see [Setup](#setup)).
 
-**Retained earnings.** The balance sheet computes equity as "Retained Earnings = cumulative Revenue - Expenses." In a multi-year system, retained earnings would carry forward from prior fiscal years with period-closing entries. Since this model starts from a clean slate and does not include dividends or other equity transactions, the calculation is equivalent.
+### Step-by-step: Run the benchmarks
 
-**DuckDB as warehouse.** DuckDB is an embedded analytical database, chosen for portability (no server setup). A production financial data warehouse would typically use Snowflake, BigQuery, Redshift, or a similar cloud warehouse with role-based access control, audit logging, and concurrent query support.
+All commands are run from your **host terminal** in the project root directory.
+
+**Step 1 — Pre-generate source data for all scales (run once):**
+
+```bash
+docker compose exec airflow-webserver bash -lc \
+  "cd /opt && python -u benchmarks/generate_benchmark_data.py --scales 90,900,4500"
+```
+
+This generates one `rides_{n}.csv` per scale into `benchmarks/data/` (gitignored). Generation is slow at the largest scales (~10–30 min total) but only needs to be done once. Subsequent benchmark runs load from these files directly — no regeneration.
+
+**Step 2 — Validate the Python baseline produces correct totals (quick sanity check):**
+
+```bash
+docker compose exec airflow-webserver bash -lc \
+  "cd /opt && python benchmarks/baseline_income_statement.py --validate"
+```
+
+Expected output: income statement printed, followed by `VALIDATION PASSED`. The totals must be: Revenue 536,507.46 / Expenses 10,188.00 / Net Income 526,319.46.
+
+**Step 3 — Run the full benchmark suite:**
+
+```bash
+docker compose exec airflow-webserver bash -lc \
+  "cd /opt && python -u benchmarks/run_benchmarks.py --scales 90,900,4500 --runs 3"
+```
+
+This will take a while (potentially 30+ minutes at the largest scales). For a quick test with just the two smallest scales:
+
+```bash
+docker compose exec airflow-webserver bash -lc \
+  "cd /opt && python -u benchmarks/run_benchmarks.py --scales 90,900 --runs 3"
+```
+
+To run only the Python baseline (no dbt, much faster):
+
+```bash
+docker compose exec airflow-webserver bash -lc \
+  "cd /opt && python benchmarks/run_benchmarks.py --skip-dbt"
+```
+
+### Output files
+
+| File | Description |
+|------|-------------|
+| `benchmarks/data/rides_{n}.csv` | Pre-generated source data per scale (gitignored) |
+| `benchmarks/results.csv` | Timing data: fleet_size, ride_count, approach, median_seconds |
+| `benchmarks/results.json` | Detailed results with all individual run times |
+| `benchmarks/results.specs.json` | Machine specs (CPU, Python/dbt/DuckDB versions) |
+
+### What to expect
+
+At small scale (90 scooters), the Python script is faster — it has no overhead. As scale increases, the dbt full-refresh time grows linearly (it processes the entire year each time), while the dbt incremental time stays roughly flat (it only processes December). The crossover point — where incremental becomes faster than the Python script — is the key finding.
+
+After running, record the machine specs from `results.specs.json` for the thesis.
 
 ---
 
-## Future Work
+## Evaluation: Fault Injection (Data Quality)
 
-The following extensions would bring the pipeline closer to production readiness. They are outside the scope of this thesis but represent natural next steps:
+The fault injection evaluation tests whether the pipeline's data quality mechanisms work against imperfect data.
 
-**Period closing mechanism.** A `closed_periods` reference table that marks processed months as locked. The pipeline would refuse to reprocess closed periods, preventing accidental modification of finalized financial data. This is standard in enterprise accounting systems.
+### Fault types
 
-**Cash settlement entries.** Adding a payment/settlement data source that generates DR Cash / CR Accounts Receivable entries when customers pay. This would make the AR balance reflect true outstanding receivables and complete the cash flow picture.
+| Fault | Real-world analogue | Handling | Mechanism |
+|-------|-------------------|----------|-----------|
+| NULL financial amounts | Payment gateway timeout | **Prevention** — staging filters them out | `WHERE amount IS NOT NULL` |
+| Extreme outlier (100×) | Decimal point error | **Prevention** — staging filters them out | `WHERE amount <= 50.00` |
+| Duplicate rides | Duplicate event delivery (Kafka) | **Prevention** — staging deduplicates | `ROW_NUMBER() OVER (PARTITION BY order_id ...)` |
+| Invalid country | Misconfigured source | **Detection** — `accepted_values` test halts pipeline | Existing dbt test on `country` column |
 
-**Reversal and adjustment entries.** A mechanism to post manual adjusting entries (accruals, corrections, reclassifications) that are not derived from ride data. These would be loaded from a separate source table and merged into the journal entry flow.
+### Staging guardrails (added to `stg_rides.sql`)
 
-**Depreciation module.** The project name references scooter fleet depreciation. Source data for scooter master records and heartbeat snapshots already exists (`scooters_master.csv`, `scooter_heartbeat.csv`) but is not yet integrated into the financial pipeline. A depreciation model would calculate monthly asset write-downs based on scooter purchase price and useful life.
+Three defensive CTEs were added to the staging model. They have **no effect on clean data** (verified: max clean ride amount is 8.70 EUR, no NULLs, no duplicate order_ids):
 
-**Multi-period financial statements.** The current reports show a single period. Comparative statements (this month vs. last month, this year vs. last year) and year-to-date accumulation would provide more analytical value.
+1. `not_null_filter` — excludes rows with NULL `amount`, `vat_amount`, or `sum_with_vat_amount`
+2. `outlier_filter` — excludes rows where `amount > 50 EUR` (catches 100× decimal errors; threshold is 6× above max legitimate ride)
+3. `deduplicated` — keeps one row per `order_id` via `ROW_NUMBER()`, ordered by `start_time, ride_id`
 
-**Data lineage visualization.** Integrating dbt docs (`dbt docs generate && dbt docs serve`) to provide an interactive DAG visualization and column-level lineage for audit purposes.
+### Step-by-step: Run the fault evaluation
+
+All commands are run from your **host terminal**.
+
+**Option A — Automated end-to-end evaluation (recommended):**
+
+```bash
+docker compose exec airflow-webserver bash -lc \
+  "cd /opt && bash benchmarks/run_fault_evaluation.sh"
+```
+
+This script does everything:
+1. Generates clean data and runs the full pipeline (baseline)
+2. Injects prevention faults (null, outlier, duplicate)
+3. Re-seeds and re-runs the pipeline
+4. Verifies all 75 tests still pass (guardrails filter faulted rows; totals reflect clean data only)
+5. Restores clean data
+6. Injects the detection fault (invalid country "Tartu")
+7. Re-seeds and re-runs — expects the `accepted_values` test to **fail**
+8. Restores clean data
+
+**Option B — Manual step-by-step:**
+
+```bash
+# 1. Generate clean baseline data
+docker compose exec airflow-webserver bash -lc \
+  "cd /opt && python scripts/create_source_data.py --start-date 2026-01-01 --end-date 2027-01-01"
+
+# 2. Seed and run pipeline on clean data
+docker compose exec airflow-webserver bash -lc \
+  "cd /opt/dbt && dbt seed --full-refresh --profiles-dir /opt/dbt"
+docker compose exec airflow-webserver bash -lc \
+  "cd /opt/dbt && dbt run --full-refresh --profiles-dir /opt/dbt \
+    --vars '{\"start_date\": \"2026-01-01\", \"end_date\": \"2026-12-31\"}'"
+docker compose exec airflow-webserver bash -lc \
+  "cd /opt/dbt && dbt test --profiles-dir /opt/dbt \
+    --vars '{\"start_date\": \"2026-01-01\", \"end_date\": \"2026-12-31\"}'"
+
+# 3. Inject prevention-mode faults
+docker compose exec airflow-webserver bash -lc \
+  "cd /opt && python scripts/inject_faults.py --fault-types null,outlier,duplicate --seed 123"
+
+# 4. Re-seed and re-run on faulted data
+docker compose exec airflow-webserver bash -lc \
+  "cd /opt/dbt && dbt seed --full-refresh --profiles-dir /opt/dbt"
+docker compose exec airflow-webserver bash -lc \
+  "cd /opt/dbt && dbt run --full-refresh --profiles-dir /opt/dbt \
+    --vars '{\"start_date\": \"2026-01-01\", \"end_date\": \"2026-12-31\"}'"
+
+# 5. Verify tests pass (should all pass — guardrails cleaned the faults)
+docker compose exec airflow-webserver bash -lc \
+  "cd /opt/dbt && dbt test --profiles-dir /opt/dbt \
+    --vars '{\"start_date\": \"2026-01-01\", \"end_date\": \"2026-12-31\"}'"
+
+# 6. Restore clean data
+docker compose exec airflow-webserver bash -lc \
+  "cd /opt && cp data/rides.csv.clean_backup data/rides.csv && \
+    cp dbt/seeds/rides.csv.clean_backup dbt/seeds/rides.csv"
+
+# 7. Inject detection-mode fault (invalid country)
+docker compose exec airflow-webserver bash -lc \
+  "cd /opt && python scripts/inject_faults.py --fault-types country --seed 123"
+
+# 8. Re-seed and re-run — expect test FAILURE
+docker compose exec airflow-webserver bash -lc \
+  "cd /opt/dbt && dbt seed --full-refresh --profiles-dir /opt/dbt"
+docker compose exec airflow-webserver bash -lc \
+  "cd /opt/dbt && dbt run --full-refresh --profiles-dir /opt/dbt \
+    --vars '{\"start_date\": \"2026-01-01\", \"end_date\": \"2026-12-31\"}'" || true
+docker compose exec airflow-webserver bash -lc \
+  "cd /opt/dbt && dbt test --profiles-dir /opt/dbt \
+    --vars '{\"start_date\": \"2026-01-01\", \"end_date\": \"2026-12-31\"}'" || echo "EXPECTED FAILURE"
+
+# 9. Restore clean data
+docker compose exec airflow-webserver bash -lc \
+  "cd /opt && cp data/rides.csv.clean_backup data/rides.csv && \
+    cp dbt/seeds/rides.csv.clean_backup dbt/seeds/rides.csv"
+```
+
+### What to expect
+
+**Prevention faults:** After injecting NULL, outlier, and duplicate faults, the pipeline should run normally. All 75 tests should pass. The staging guardrails silently filter out the faulted rows, so the income statement totals will be slightly lower than the clean baseline (the corrupted rows and their associated revenue are excluded). The reports accurately reflect only the data that passed the quality checks.
+
+**Detection fault:** After injecting the invalid country "Tartu", the `dbt test` step should **fail** with an `accepted_values` error on `stg_rides.country`. This is the expected behaviour — the pipeline refuses to produce reports with invalid data.
+
+Record the fault counts (how many rows of each type were injected) and the row counts (faulted CSV rows vs. staged rows) for the thesis tables.
 
 ---
 

@@ -30,6 +30,7 @@ x-airflow-common: &airflow-common
     - ./data:/opt/data
     - ./exports:/opt/exports
     - ./scripts:/opt/scripts
+    - ./benchmarks:/opt/benchmarks
 
     - ./duckdb:/opt/duckdb
   depends_on:
