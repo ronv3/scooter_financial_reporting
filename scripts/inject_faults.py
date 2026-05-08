@@ -88,7 +88,7 @@ def inject_invalid_country(
     """Replace country with an invalid value to test accepted_values detection."""
     n = max(1, int(len(df) * rate))
     idx = rng.choice(df.index, size=n, replace=False)
-    df.loc[idx, "country"] = "Tartu"
+    df.loc[idx, "country"] = "Sweden"
     return df, n
 
 

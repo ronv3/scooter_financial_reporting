@@ -185,6 +185,7 @@ dbt seed                       Loads CSV into DuckDB (data_lake.rides)
         |
         v
 stg_rides                      Type casting, null normalization, period filtering
+stg_rides_quarantine           Rejected rows with tagged rejection reasons
         |
         v
 int_journal_entries             Explodes each ride into double-entry journal lines
@@ -205,7 +206,7 @@ rpt_income_statement_summary rpt_balance_sheet_summary
 
 **Source data generation** (`scripts/create_source_data.py`): A Python script generates synthetic ride billing records — one row per completed scooter ride with pricing breakdown (net amount, VAT, gross, coupon discount). The script accepts `--start-date` and `--end-date` arguments. Without arguments it defaults to the previous calendar month. All random generation uses a fixed seed (42) so the same date range always produces identical data.
 
-**Staging** (`stg_rides`, `stg_account_mapping`, `stg_chart_of_accounts`): Defensive data cleaning. Types are cast explicitly (amounts to `DECIMAL(12,2)`, timestamps, etc.). Coupon fields are normalized (empty strings and `'None'` become SQL `NULL`, missing coupon amounts default to 0). `stg_rides` is materialized as an **incremental** table (delete+insert per period) so that the exact cleaned rides used in each period are persisted and auditable. The staging layer also applies the period filter — only rides within the `start_date`/`end_date` range flow downstream.
+**Staging** (`stg_rides`, `stg_rides_quarantine`, `stg_account_mapping`, `stg_chart_of_accounts`): Defensive data cleaning. Types are cast explicitly (amounts to `DECIMAL(12,2)`, timestamps, etc.). Coupon fields are normalized (empty strings and `'None'` become SQL `NULL`, missing coupon amounts default to 0). `stg_rides` is materialized as an **incremental** table (delete+insert per period) so that the exact cleaned rides used in each period are persisted and auditable. A companion model `stg_rides_quarantine` captures every row rejected by the staging guardrails, tagged with the rejection reason (`null_financial_amount`, `outlier_amount`, or `duplicate_order`). Together, the two tables account for every source row — a ride either passes all guardrails and enters `stg_rides`, or it is recorded in the quarantine table. The staging layer also applies the period filter — only rides within the `start_date`/`end_date` range flow downstream.
 
 **Intermediate** (`int_journal_entries`): The core accounting transformation, materialized as an **incremental** table (delete+insert per period) for auditability. Each ride is cross-joined with a line-type spine to produce double-entry journal lines. A ride without a coupon produces 3 lines; a ride with a coupon produces 4. Zero-amount lines are filtered out (standard accounting practice — you do not post a EUR 0.00 entry). Each line receives a deterministic `journal_entry_id` (MD5 hash of `order_id` + `line_type`) for traceability.
 
@@ -341,7 +342,7 @@ The general ledger uses a **delete+insert** pattern implemented via a dbt pre-ho
 
 This makes the GL **append-only across periods**: once January is processed and February begins, January's data is untouched. But the current period can be safely reprocessed at any time — the pre-hook clears it before re-inserting. On first run (or `--full-refresh`), the pre-hook is skipped because there is no existing table to delete from.
 
-The same incremental pattern extends to every layer: `stg_rides`, `int_journal_entries`, `fct_trial_balance`, and all four report models — each deletes and reinserts only the current period's rows. This means that historical data at every layer is stable and auditable, building up a complete historical series of financial statements across all monthly runs.
+The same incremental pattern extends to every layer: `stg_rides`, `stg_rides_quarantine`, `int_journal_entries`, `fct_trial_balance`, and all four report models — each deletes and reinserts only the current period's rows. This means that historical data at every layer is stable and auditable, building up a complete historical series of financial statements across all monthly runs.
 
 ---
 
@@ -355,7 +356,7 @@ generate_source_data → seed → staging → intermediate → marts → reports
 
 1. **generate_source_data** — Python script produces ride records for the target month.
 2. **seed** — Two parallel sub-tasks: `seed_rides` (monthly data) and `seed_reference_data` (static reference tables).
-3. **staging** — Runs and tests `stg_rides`, `stg_account_mapping`, `stg_chart_of_accounts`.
+3. **staging** — Runs and tests `stg_rides`, `stg_rides_quarantine`, `stg_account_mapping`, `stg_chart_of_accounts`.
 4. **intermediate** — Runs and tests `int_journal_entries`, including the journal balance assertion.
 5. **marts** — Runs and tests the GL first, then (only if GL tests pass) runs and tests the trial balance.
 6. **reports** — Runs and tests all report models, including the balance sheet equation assertion.
@@ -396,6 +397,7 @@ This layer-by-layer design means a test failure in staging prevents wasted compu
 │   │   ├── sources.yml                   # dbt source declarations
 │   │   ├── staging/
 │   │   │   ├── stg_rides.sql             # Incremental + guardrails (NULL, outlier, dedup)
+│   │   │   ├── stg_rides_quarantine.sql  # Rejected rows with tagged reasons
 │   │   │   ├── stg_account_mapping.sql   # Journal posting rules
 │   │   │   ├── stg_chart_of_accounts.sql # Account master
 │   │   │   └── schema.yml
@@ -548,7 +550,7 @@ This script does everything:
 3. Re-seeds and re-runs the pipeline
 4. Verifies all 75 tests still pass (guardrails filter faulted rows; totals reflect clean data only)
 5. Restores clean data
-6. Injects the detection fault (invalid country "Tartu")
+6. Injects the detection fault (invalid country "Sweden")
 7. Re-seeds and re-runs — expects the `accepted_values` test to **fail**
 8. Restores clean data
 
@@ -614,7 +616,7 @@ docker compose exec airflow-webserver bash -lc \
 
 **Prevention faults:** After injecting NULL, outlier, and duplicate faults, the pipeline should run normally. All 75 tests should pass. The staging guardrails silently filter out the faulted rows, so the income statement totals will be slightly lower than the clean baseline (the corrupted rows and their associated revenue are excluded). The reports accurately reflect only the data that passed the quality checks.
 
-**Detection fault:** After injecting the invalid country "Tartu", the `dbt test` step should **fail** with an `accepted_values` error on `stg_rides.country`. This is the expected behaviour — the pipeline refuses to produce reports with invalid data.
+**Detection fault:** After injecting the invalid country "Sweden", the `dbt test` step should **fail** with an `accepted_values` error on `stg_rides.country`. This is the expected behaviour — the pipeline refuses to produce reports with invalid data.
 
 Record the fault counts (how many rows of each type were injected) and the row counts (faulted CSV rows vs. staged rows) for the thesis tables.
 

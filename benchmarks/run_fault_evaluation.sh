@@ -126,7 +126,7 @@ echo "--- Step 7b: Run tests (expect accepted_values FAILURE on country) ---"
 if dbt test --profiles-dir ${DBT_PROFILES_DIR} --vars "${VARS}" 2>&1; then
     echo "  WARNING: Tests passed unexpectedly — country fault was not detected!"
 else
-    echo "  EXPECTED: Tests failed — invalid country 'Tartu' was detected by accepted_values test"
+    echo "  EXPECTED: Tests failed — invalid country 'Sweden' was detected by accepted_values test"
 fi
 cd ..
 
