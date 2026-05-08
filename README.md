@@ -79,7 +79,7 @@ docker compose exec airflow-webserver bash -lc \
   "cd /opt && python scripts/create_source_data.py --start-date 2026-01-01 --end-date 2027-01-01"
 ```
 
-This produces approximately 134,000 ride records across 12 months, 3 countries, and 90 scooters. The script prints a validation summary — verify all checks pass before continuing.
+This produces 131,412 ride records across 12 months, 3 countries, and 90 scooters. The script prints a validation summary — verify all checks pass before continuing.
 
 ### Step 2 — Seed into DuckDB
 
